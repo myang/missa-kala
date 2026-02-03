@@ -1,0 +1,21 @@
+# Chrome extension package
+*.crx
+*.pem
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Dependencies (if you add npm later)
+node_modules/
+package-lock.json
