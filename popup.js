@@ -71,6 +71,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const card = document.createElement('div');
     card.className = 'restaurant-card';
 
+    // Get confidence info
+    const confidence = result.confidence || { dayDetection: 'unknown', method: 'unknown' };
+    const confidenceInfo = getConfidenceInfo(confidence);
+
     if (result.error) {
       card.classList.add('error');
       card.innerHTML = `
@@ -89,6 +93,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="restaurant-name">
           <span class="status-icon">🐟</span>
           <span>${result.name}</span>
+          ${confidenceInfo.showWarning ? `<span class="confidence-badge" title="${confidenceInfo.tooltip}">${confidenceInfo.badge}</span>` : ''}
         </div>
         <div class="restaurant-details">
           <strong>Fish found!</strong> ${result.fishItems.length} item(s)
@@ -99,6 +104,9 @@ document.addEventListener('DOMContentLoaded', function() {
               <div class="fish-item">${item}</div>
             `).join('')}
           </div>
+        ` : ''}
+        ${confidenceInfo.showWarning ? `
+          <div class="confidence-warning">${confidenceInfo.warning}</div>
         ` : ''}
         <div class="restaurant-details" style="margin-top: 10px;">
           <a href="${result.url}" target="_blank">View full menu</a>
@@ -119,6 +127,34 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     return card;
+  }
+
+  function getConfidenceInfo(confidence) {
+    const dayDetection = confidence.dayDetection || 'unknown';
+    const method = confidence.method || 'unknown';
+
+    if (dayDetection === 'high') {
+      return {
+        showWarning: false,
+        badge: '',
+        tooltip: '',
+        warning: ''
+      };
+    } else if (dayDetection === 'low' || dayDetection === 'unknown') {
+      return {
+        showWarning: true,
+        badge: '⚠️',
+        tooltip: 'Could not detect today\'s menu - result may include other days',
+        warning: '⚠️ Could not detect today\'s menu. Please verify manually.'
+      };
+    } else {
+      return {
+        showWarning: false,
+        badge: '',
+        tooltip: '',
+        warning: ''
+      };
+    }
   }
 
   function showEmptyState() {

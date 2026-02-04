@@ -3,7 +3,10 @@
 // Import config (note: in service workers, we need to use importScripts)
 importScripts('config.js');
 
-// Listen for messages from popup
+// Track offscreen document state
+let offscreenDocumentCreated = false;
+
+// Listen for messages from popup and offscreen document
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'checkMenus') {
     checkAllRestaurantMenus().then(results => {
@@ -16,7 +19,45 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Return true to indicate async response
     return true;
   }
+
+  // Forward messages from offscreen document (if needed)
+  if (request.action === 'fetchRenderedPage') {
+    // This is handled by offscreen.js, but we need to allow async response
+    return true;
+  }
 });
+
+// Ensure offscreen document is created
+async function ensureOffscreenDocument() {
+  if (offscreenDocumentCreated) {
+    return;
+  }
+
+  try {
+    // Check if offscreen document already exists
+    const existingContexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT']
+    });
+
+    if (existingContexts.length > 0) {
+      offscreenDocumentCreated = true;
+      return;
+    }
+
+    // Create offscreen document
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['DOM_SCRAPING'],
+      justification: 'Parse restaurant menus from JavaScript-rendered pages and extract today\'s menu'
+    });
+
+    offscreenDocumentCreated = true;
+    console.log('Offscreen document created');
+  } catch (error) {
+    console.error('Error creating offscreen document:', error);
+    // Don't throw - we'll fall back to regular fetch
+  }
+}
 
 async function checkAllRestaurantMenus() {
   const results = [];
@@ -47,7 +88,7 @@ async function checkAllRestaurantMenus() {
 
 async function checkRestaurantMenu(restaurant) {
   try {
-    // Fetch the restaurant's menu page
+    // First, try regular fetch (fast for static pages)
     const response = await fetch(restaurant.url, {
       method: 'GET',
       headers: {
@@ -61,14 +102,61 @@ async function checkRestaurantMenu(restaurant) {
 
     const html = await response.text();
 
-    // Parse HTML and search for fish keywords
-    const fishItems = findFishInMenu(html);
+    // Parse HTML and search for fish keywords (with day detection)
+    const staticResult = findFishInMenu(html);
 
+    // Check if page looks like a SPA
+    const isSPA = looksLikeSPA(html);
+
+    // If we found fish in static HTML and page doesn't look like SPA, return result
+    if (staticResult.fishItems.length > 0 && !isSPA) {
+      return {
+        name: restaurant.name,
+        url: restaurant.url,
+        hasFish: true,
+        fishItems: staticResult.fishItems,
+        confidence: staticResult.confidence,
+        error: null
+      };
+    }
+
+    // If no fish found and page looks like SPA, try offscreen rendering
+    if (staticResult.fishItems.length === 0 && isSPA) {
+      console.log(`${restaurant.name} appears to be JS-rendered, using offscreen document`);
+
+      try {
+        await ensureOffscreenDocument();
+
+        // Send message to offscreen document
+        const offscreenResult = await chrome.runtime.sendMessage({
+          action: 'fetchRenderedPage',
+          url: restaurant.url,
+          keywords: FISH_KEYWORDS
+        });
+
+        if (offscreenResult && offscreenResult.success) {
+          return {
+            name: restaurant.name,
+            url: restaurant.url,
+            hasFish: offscreenResult.fishItems.length > 0,
+            fishItems: offscreenResult.fishItems,
+            confidence: offscreenResult.confidence,
+            error: null
+          };
+        }
+      } catch (offscreenError) {
+        console.warn(`Offscreen rendering failed for ${restaurant.name}:`, offscreenError);
+        // Fall back to static result
+      }
+    }
+
+    // Return static result (with confidence indicator)
     return {
       name: restaurant.name,
       url: restaurant.url,
-      hasFish: fishItems.length > 0,
-      fishItems: fishItems,
+      hasFish: staticResult.fishItems.length > 0,
+      fishItems: staticResult.fishItems,
+      confidence: staticResult.confidence,
       error: null
     };
   } catch (error) {
@@ -76,13 +164,35 @@ async function checkRestaurantMenu(restaurant) {
   }
 }
 
-function findFishInMenu(html) {
-  const fishItems = [];
+// Detect if page is likely a Single Page Application
+function looksLikeSPA(html) {
+  const spaIndicators = [
+    /<div id="root"><\/div>/,
+    /<div id="app"><\/div>/,
+    /<div id="__next"><\/div>/,
+    /react/i,
+    /vue\.js/i,
+    /angular/i,
+    /<script[^>]*src="[^"]*bundle/i,
+    /<script[^>]*src="[^"]*app\.js/i,
+    /<script[^>]*src="[^"]*main\.js/i,
+    /window\.__INITIAL_STATE__/,
+    /data-reactroot/,
+    /ng-app/
+  ];
 
+  return spaIndicators.some(pattern => pattern.test(html));
+}
+
+function findFishInMenu(html) {
   // Remove HTML tags using regex (since DOMParser isn't available in service workers)
   let textContent = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Remove script tags and content
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')   // Remove style tags and content
+    .replace(/<br\s*\/?>/gi, '\n')                     // Convert <br> to newlines
+    .replace(/<\/div>/gi, '\n')                        // Convert </div> to newlines
+    .replace(/<\/p>/gi, '\n')                          // Convert </p> to newlines
+    .replace(/<\/h[1-6]>/gi, '\n')                     // Convert header endings to newlines
     .replace(/<[^>]+>/g, ' ')                          // Remove all HTML tags
     .replace(/&nbsp;/g, ' ')                           // Replace &nbsp;
     .replace(/&amp;/g, '&')                            // Replace &amp;
@@ -90,10 +200,140 @@ function findFishInMenu(html) {
     .replace(/&gt;/g, '>')                             // Replace &gt;
     .replace(/&quot;/g, '"');                          // Replace &quot;
 
-  // Split into lines
-  const lines = textContent.split('\n');
+  // Try to extract today's section
+  const todaySection = extractTodaySection(textContent);
 
-  // Search each line for fish keywords
+  if (todaySection.success) {
+    // Search only today's section
+    const fishItems = searchForFish(todaySection.text);
+    return {
+      fishItems: fishItems,
+      confidence: {
+        dayDetection: 'high',
+        method: todaySection.method
+      }
+    };
+  }
+
+  // Fallback: search entire page
+  console.warn('Could not identify today\'s section, searching entire page');
+  const fishItems = searchForFish(textContent);
+  return {
+    fishItems: fishItems,
+    confidence: {
+      dayDetection: 'low',
+      method: 'full-page'
+    }
+  };
+}
+
+function extractTodaySection(text) {
+  const today = new Date().getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+  // Define day patterns in multiple languages
+  const dayPatterns = {
+    0: ['sunday', 'sunnuntai', 'söndag', 'sonntag', 'su', 'sun'],
+    1: ['monday', 'maanantai', 'måndag', 'montag', 'ma', 'mon'],
+    2: ['tuesday', 'tiistai', 'tisdag', 'dienstag', 'ti', 'tue'],
+    3: ['wednesday', 'keskiviikko', 'onsdag', 'mittwoch', 'ke', 'wed'],
+    4: ['thursday', 'torstai', 'torsdag', 'donnerstag', 'to', 'thu'],
+    5: ['friday', 'perjantai', 'fredag', 'freitag', 'pe', 'fri'],
+    6: ['saturday', 'lauantai', 'lördag', 'samstag', 'la', 'sat']
+  };
+
+  const todayPatterns = dayPatterns[today] || [];
+  const allDayPatterns = Object.values(dayPatterns).flat();
+
+  // Also try date-based matching
+  const todayDate = new Date();
+  const datePatterns = getDatePatterns(todayDate);
+
+  const lines = text.split('\n').map(l => l.trim());
+
+  // Strategy 1: Find today by day name
+  for (let i = 0; i < lines.length; i++) {
+    const lowerLine = lines[i].toLowerCase();
+
+    // Check if line contains today's day
+    if (todayPatterns.some(pattern =>
+        lowerLine.includes(pattern) &&
+        !lowerLine.includes('tomorrow') &&
+        !lowerLine.includes('next')
+    )) {
+      // Found today's marker, extract content until next day
+      let sectionLines = [lines[i]];
+      let endIndex = i + 1;
+
+      for (let j = i + 1; j < lines.length && endIndex - i < 30; j++) {
+        const nextLine = lines[j].toLowerCase();
+
+        // Stop if we hit another day marker (that's not today)
+        const isOtherDay = allDayPatterns.some(pattern =>
+          nextLine.includes(pattern) &&
+          !todayPatterns.some(tp => nextLine.includes(tp))
+        );
+
+        if (isOtherDay) {
+          break;
+        }
+
+        sectionLines.push(lines[j]);
+        endIndex = j;
+      }
+
+      return {
+        success: true,
+        text: sectionLines.join('\n'),
+        method: 'day-header'
+      };
+    }
+  }
+
+  // Strategy 2: Find today by date
+  for (const datePattern of datePatterns) {
+    const dateIndex = text.toLowerCase().indexOf(datePattern.toLowerCase());
+    if (dateIndex !== -1) {
+      // Extract section around this date
+      const sectionStart = Math.max(0, dateIndex - 50);
+      const sectionEnd = Math.min(text.length, dateIndex + 800);
+
+      return {
+        success: true,
+        text: text.substring(sectionStart, sectionEnd),
+        method: 'date-match'
+      };
+    }
+  }
+
+  // Could not identify today's section
+  return {
+    success: false,
+    text: text,
+    method: 'unknown'
+  };
+}
+
+function getDatePatterns(date) {
+  const day = date.getDate();
+  const month = date.getMonth() + 1;
+  const year = date.getFullYear();
+
+  return [
+    // ISO format
+    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+
+    // European formats
+    `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.${year}`,
+    `${day}.${month}.${year}`,
+    `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`,
+    `${day}/${month}/${year}`,
+  ];
+}
+
+function searchForFish(text) {
+  const fishItems = [];
+  const lines = text.split('\n');
+
   for (const line of lines) {
     const trimmedLine = line.trim();
 

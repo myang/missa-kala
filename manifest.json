@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "description": "Find which restaurants have fish on today's menu",
   "permissions": [
-    "storage"
+    "storage",
+    "offscreen"
   ],
   "host_permissions": [
     "<all_urls>"
