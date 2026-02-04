@@ -115,8 +115,8 @@ Use tools like [Favicon.io](https://favicon.io/) for generation.
 
 ## Important Constraints
 
-### ⚠️ JavaScript Rendering Limitation (CRITICAL)
-**This is the biggest limitation of the current implementation.**
+### ⚠️ JavaScript Rendering Limitation (CRITICAL ISSUE #1)
+**One of two critical limitations in the current implementation.**
 
 - Current approach uses `fetch()` which only gets initial HTML
 - **JavaScript-rendered pages (React/Vue/Angular) will fail to detect fish**
@@ -128,6 +128,29 @@ Use tools like [Favicon.io](https://favicon.io/) for generation.
 **Affected Sites**: Any restaurant using modern JavaScript frameworks (increasingly common)
 **Solution**: See `JAVASCRIPT_RENDERING_SOLUTION.md` for implementation options
 
+### ⚠️ No Day-of-Week Detection (CRITICAL ISSUE #2)
+**The second critical limitation in the current implementation.**
+
+- Many restaurants display the **entire week's menu** on one page (Mon-Fri)
+- Current implementation searches the **whole page** without detecting which day is today
+- **Result**: False positives - shows "Fish found!" when fish is on Tuesday's menu but today is Friday
+
+**Example Problem:**
+```
+Page content:
+  Monday: Pasta Carbonara
+  Tuesday: Grilled Salmon  ← Fish keyword found!
+  Wednesday: Chicken Curry
+  Thursday: Beef Stew
+  Friday (TODAY): Caesar Salad
+
+Extension shows: "🐟 Fish found!"
+Reality: No fish on today's menu
+```
+
+**Affected Sites**: Most restaurant sites that show weekly menus (very common)
+**Solution**: See `DAILY_MENU_DETECTION.md` for implementation strategies
+
 ### CORS Limitations
 - Some websites block cross-origin requests
 - Extension uses `host_permissions: ["<all_urls>"]` to bypass most restrictions
@@ -138,7 +161,9 @@ Use tools like [Favicon.io](https://favicon.io/) for generation.
 - Keyword-based (not AI/NLP)
 - May have false positives/negatives
 - Case-insensitive search using `.toLowerCase()`
-- **Cannot detect dynamically rendered content** (see JavaScript limitation above)
+- **Cannot detect dynamically rendered content** (see Issue #1 above)
+- **Searches entire page including all days of week** (see Issue #2 above)
+- No confidence scoring (cannot tell if result is reliable)
 
 ### Performance
 - All restaurants checked in parallel (not sequential)
@@ -187,8 +212,8 @@ chrome.storage.local.get(['key'], result => {
 
 ### Critical Issues
 
-#### ⚠️ JavaScript-Rendered Pages Not Supported
-**THE BIGGEST LIMITATION**: The current implementation uses `fetch()` which only retrieves the initial HTML. Modern restaurant websites often use React, Vue, or Angular, where menu content is rendered by JavaScript AFTER the page loads. This means:
+#### ⚠️ Issue #1: JavaScript-Rendered Pages Not Supported
+**CRITICAL LIMITATION #1**: The current implementation uses `fetch()` which only retrieves the initial HTML. Modern restaurant websites often use React, Vue, or Angular, where menu content is rendered by JavaScript AFTER the page loads. This means:
 
 - `fetch()` gets: `<div id="root"></div>` (empty)
 - Browser shows: Full menu with all items
@@ -202,8 +227,34 @@ chrome.storage.local.get(['key'], result => {
 
 **Reference**: background.js:51-62 (current fetch implementation)
 
+---
+
+#### ⚠️ Issue #2: No Day-of-Week Detection
+**CRITICAL LIMITATION #2**: Many restaurants show the **entire week's menu** on one page. The current implementation searches the whole page without detecting which menu is for today.
+
+Example problem:
+```
+Page shows:
+  Monday: Pasta
+  Tuesday: Grilled Salmon ← Fish found!
+  Wednesday: Chicken
+  Friday (today): Beef Stew
+
+Extension shows: "🐟 Fish found!" ← FALSE POSITIVE
+```
+
+**Impact**: False positives - extension shows fish is available today when it's actually on a different day's menu.
+
+**Solution**: See `DAILY_MENU_DETECTION.md` for implementation strategies:
+1. **Smart Text Parsing** - Detect day headers and extract today's section
+2. **DOM-Based Parsing** - Use CSS selectors and styling to find "today"
+3. **Per-Restaurant Configuration** - Manual configuration for maximum accuracy
+
+**Reference**: background.js:79-125 (`findFishInMenu` function)
+
 ### Current Limitations
-- ❌ **JavaScript-rendered pages fail** (see above - CRITICAL)
+- ❌ **JavaScript-rendered pages fail** (Issue #1 - CRITICAL)
+- ❌ **No day-of-week detection - searches entire week** (Issue #2 - CRITICAL)
 - No error retry logic
 - No timeout handling for slow sites
 - No rate limiting (could spam servers)
@@ -211,7 +262,9 @@ chrome.storage.local.get(['key'], result => {
 - Icons must be manually created
 
 ### Potential Enhancements
-- 🔥 **FIX: Implement offscreen documents for JS-rendered pages** (HIGH PRIORITY)
+- 🔥 **FIX: Implement offscreen documents for JS-rendered pages** (CRITICAL PRIORITY)
+- 🔥 **FIX: Add day-of-week detection to find only today's menu** (CRITICAL PRIORITY)
+- Add confidence scoring for results (high/medium/low)
 - Add popup notifications when fish is found
 - Implement retry logic with exponential backoff
 - Add loading indicators per restaurant
@@ -257,7 +310,8 @@ missa-kala/
 ├── README.md                            # User-facing documentation
 ├── SETUP.md                             # Detailed setup guide
 ├── CLAUDE.MD                            # This file - AI assistant guide
-└── JAVASCRIPT_RENDERING_SOLUTION.md     # Solution for JS-rendered pages
+├── JAVASCRIPT_RENDERING_SOLUTION.md     # Solution for JS-rendered pages (Issue #1)
+└── DAILY_MENU_DETECTION.md              # Solution for day detection (Issue #2)
 ```
 
 ## AI Assistant Notes
