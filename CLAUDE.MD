@@ -115,6 +115,19 @@ Use tools like [Favicon.io](https://favicon.io/) for generation.
 
 ## Important Constraints
 
+### ⚠️ JavaScript Rendering Limitation (CRITICAL)
+**This is the biggest limitation of the current implementation.**
+
+- Current approach uses `fetch()` which only gets initial HTML
+- **JavaScript-rendered pages (React/Vue/Angular) will fail to detect fish**
+- If a restaurant uses a Single Page Application (SPA), the menu content is rendered by JavaScript AFTER page load
+- `fetch()` sees: `<div id="root"></div>` (empty container)
+- Browser sees: Full menu with all fish items
+- **Result**: False negatives - shows "No fish" when fish is actually on the menu
+
+**Affected Sites**: Any restaurant using modern JavaScript frameworks (increasingly common)
+**Solution**: See `JAVASCRIPT_RENDERING_SOLUTION.md` for implementation options
+
 ### CORS Limitations
 - Some websites block cross-origin requests
 - Extension uses `host_permissions: ["<all_urls>"]` to bypass most restrictions
@@ -125,6 +138,7 @@ Use tools like [Favicon.io](https://favicon.io/) for generation.
 - Keyword-based (not AI/NLP)
 - May have false positives/negatives
 - Case-insensitive search using `.toLowerCase()`
+- **Cannot detect dynamically rendered content** (see JavaScript limitation above)
 
 ### Performance
 - All restaurants checked in parallel (not sequential)
@@ -171,7 +185,25 @@ chrome.storage.local.get(['key'], result => {
 
 ## Known Issues & Future Improvements
 
+### Critical Issues
+
+#### ⚠️ JavaScript-Rendered Pages Not Supported
+**THE BIGGEST LIMITATION**: The current implementation uses `fetch()` which only retrieves the initial HTML. Modern restaurant websites often use React, Vue, or Angular, where menu content is rendered by JavaScript AFTER the page loads. This means:
+
+- `fetch()` gets: `<div id="root"></div>` (empty)
+- Browser shows: Full menu with all items
+
+**Impact**: Extension will show "No fish found" even when fish is on the menu if the restaurant uses a JavaScript framework.
+
+**Solution**: See `JAVASCRIPT_RENDERING_SOLUTION.md` for detailed implementation options:
+1. **Offscreen Documents API** (recommended) - Creates invisible iframe to render JS
+2. **Tab Injection** - Opens hidden tabs with content scripts
+3. **API Discovery** - Direct API calls (requires per-site configuration)
+
+**Reference**: background.js:51-62 (current fetch implementation)
+
 ### Current Limitations
+- ❌ **JavaScript-rendered pages fail** (see above - CRITICAL)
 - No error retry logic
 - No timeout handling for slow sites
 - No rate limiting (could spam servers)
@@ -179,6 +211,7 @@ chrome.storage.local.get(['key'], result => {
 - Icons must be manually created
 
 ### Potential Enhancements
+- 🔥 **FIX: Implement offscreen documents for JS-rendered pages** (HIGH PRIORITY)
 - Add popup notifications when fish is found
 - Implement retry logic with exponential backoff
 - Add loading indicators per restaurant
@@ -187,6 +220,7 @@ chrome.storage.local.get(['key'], result => {
 - Advanced keyword configuration (regex support)
 - Multi-language UI
 - Settings page for configuration
+- Per-restaurant rendering strategy configuration
 
 ## Extension Publishing
 
@@ -209,20 +243,21 @@ Not currently published to Chrome Web Store. To distribute:
 
 ```
 missa-kala/
-├── manifest.json      # Extension metadata & permissions
-├── config.js          # User configuration
-├── background.js      # Service worker (menu fetching)
-├── popup.html         # Popup UI structure
-├── popup.js           # Popup logic & event handlers
-├── popup.css          # Popup styling
+├── manifest.json                        # Extension metadata & permissions
+├── config.js                            # User configuration
+├── background.js                        # Service worker (menu fetching)
+├── popup.html                           # Popup UI structure
+├── popup.js                             # Popup logic & event handlers
+├── popup.css                            # Popup styling
 ├── icons/
-│   ├── icon16.png    # Toolbar icon
-│   ├── icon48.png    # Extension management
-│   └── icon128.png   # Chrome Web Store
-├── screenshot/        # For documentation
-├── README.md          # User-facing documentation
-├── SETUP.md           # Detailed setup guide
-└── CLAUDE.MD          # This file
+│   ├── icon16.png                      # Toolbar icon
+│   ├── icon48.png                      # Extension management
+│   └── icon128.png                     # Chrome Web Store
+├── screenshot/                          # For documentation
+├── README.md                            # User-facing documentation
+├── SETUP.md                             # Detailed setup guide
+├── CLAUDE.MD                            # This file - AI assistant guide
+└── JAVASCRIPT_RENDERING_SOLUTION.md     # Solution for JS-rendered pages
 ```
 
 ## AI Assistant Notes
