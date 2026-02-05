@@ -3,9 +3,6 @@
 // Import config (note: in service workers, we need to use importScripts)
 importScripts('config.js');
 
-// Track offscreen document state
-let offscreenDocumentCreated = false;
-
 // Listen for messages from popup and offscreen document
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'checkMenus') {
@@ -19,45 +16,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Return true to indicate async response
     return true;
   }
-
-  // Forward messages from offscreen document (if needed)
-  if (request.action === 'fetchRenderedPage') {
-    // This is handled by offscreen.js, but we need to allow async response
-    return true;
-  }
 });
-
-// Ensure offscreen document is created
-async function ensureOffscreenDocument() {
-  if (offscreenDocumentCreated) {
-    return;
-  }
-
-  try {
-    // Check if offscreen document already exists
-    const existingContexts = await chrome.runtime.getContexts({
-      contextTypes: ['OFFSCREEN_DOCUMENT']
-    });
-
-    if (existingContexts.length > 0) {
-      offscreenDocumentCreated = true;
-      return;
-    }
-
-    // Create offscreen document
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['DOM_SCRAPING'],
-      justification: 'Parse restaurant menus from JavaScript-rendered pages and extract today\'s menu'
-    });
-
-    offscreenDocumentCreated = true;
-    console.log('Offscreen document created');
-  } catch (error) {
-    console.error('Error creating offscreen document:', error);
-    // Don't throw - we'll fall back to regular fetch
-  }
-}
 
 async function checkAllRestaurantMenus() {
   const results = [];
@@ -120,32 +79,24 @@ async function checkRestaurantMenu(restaurant) {
       };
     }
 
-    // If no fish found and page looks like SPA, try offscreen rendering
+    // If no fish found and page looks like SPA, try JS-rendered extraction
     if (staticResult.fishItems.length === 0 && isSPA) {
-      console.log(`${restaurant.name} appears to be JS-rendered, using offscreen document`);
+      console.log(`${restaurant.name} appears to be JS-rendered, using hidden tab extraction`);
 
       try {
-        await ensureOffscreenDocument();
+        const renderedText = await fetchRenderedPageText(restaurant.url);
+        const renderedResult = findFishInText(renderedText);
 
-        // Send message to offscreen document
-        const offscreenResult = await chrome.runtime.sendMessage({
-          action: 'fetchRenderedPage',
+        return {
+          name: restaurant.name,
           url: restaurant.url,
-          keywords: FISH_KEYWORDS
-        });
-
-        if (offscreenResult && offscreenResult.success) {
-          return {
-            name: restaurant.name,
-            url: restaurant.url,
-            hasFish: offscreenResult.fishItems.length > 0,
-            fishItems: offscreenResult.fishItems,
-            confidence: offscreenResult.confidence,
-            error: null
-          };
-        }
-      } catch (offscreenError) {
-        console.warn(`Offscreen rendering failed for ${restaurant.name}:`, offscreenError);
+          hasFish: renderedResult.fishItems.length > 0,
+          fishItems: renderedResult.fishItems,
+          confidence: renderedResult.confidence,
+          error: null
+        };
+      } catch (renderError) {
+        console.warn(`Rendered extraction failed for ${restaurant.name}:`, renderError);
         // Fall back to static result
       }
     }
@@ -200,6 +151,10 @@ function findFishInMenu(html) {
     .replace(/&gt;/g, '>')                             // Replace &gt;
     .replace(/&quot;/g, '"');                          // Replace &quot;
 
+  return findFishInText(textContent);
+}
+
+function findFishInText(textContent) {
   // Try to extract today's section
   const todaySection = extractTodaySection(textContent);
 
@@ -225,6 +180,63 @@ function findFishInMenu(html) {
       method: 'full-page'
     }
   };
+}
+
+async function fetchRenderedPageText(url) {
+  let tabId;
+
+  try {
+    const tab = await chrome.tabs.create({ url, active: false });
+    tabId = tab.id;
+
+    await waitForTabComplete(tabId, 10000);
+    await delay(2000);
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const body = document.body;
+        return body ? (body.innerText || body.textContent || '') : '';
+      }
+    });
+
+    return results?.[0]?.result || '';
+  } finally {
+    if (tabId !== undefined) {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (error) {
+        console.warn('Failed to close hidden tab:', error);
+      }
+    }
+  }
+}
+
+function waitForTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Page load timeout'));
+    }, timeoutMs);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    }
+
+    function onUpdated(updatedTabId, info) {
+      if (updatedTabId === tabId && info.status === 'complete') {
+        cleanup();
+        resolve();
+      }
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function extractTodaySection(text) {

@@ -258,12 +258,12 @@ function searchForFish(text) {
 
 ### Strategy 2: DOM-Based Parsing (More Reliable)
 
-For offscreen documents, use proper DOM parsing to find today's section.
+For JS-rendered pages, use DOM parsing inside an injected script (via a hidden tab) to find today's section.
 
 **Implementation:**
 
 ```javascript
-// In offscreen.js
+// In injected script (runs in page context)
 function extractTodayMenu(doc) {
   const today = new Date().getDay();
 
@@ -360,8 +360,8 @@ function getDayPatterns(dayOfWeek) {
 - ✅ Works with complex HTML
 
 **Cons:**
-- ⚠️ Requires offscreen document (can't use with simple fetch)
-- ⚠️ Slightly slower
+- ⚠️ Requires tab + scripting permissions
+- ⚠️ Slower than simple fetch
 - ⚠️ Still needs fallback handling
 
 ---
@@ -425,7 +425,7 @@ const RESTAURANTS = [
 - Add confidence score to results
 
 **Phase 2: Enhance with DOM Parsing (Strategy 2)**
-- Implement when adding offscreen documents
+- Implement with hidden tab extraction
 - Use as primary method for JS-rendered sites
 - More reliable than text parsing
 

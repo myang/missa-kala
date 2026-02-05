@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', function() {
     resultsContainer.innerHTML = '';
 
     try {
+      const hasPermissions = await ensureHostPermissions();
+      if (!hasPermissions) {
+        showError('Missing permissions to access restaurant sites. Please allow access and try again.');
+        return;
+      }
+
       // Send message to background script to check menus
       const response = await chrome.runtime.sendMessage({ action: 'checkMenus' });
 
@@ -77,53 +83,58 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (result.error) {
       card.classList.add('error');
-      card.innerHTML = `
-        <div class="restaurant-name">
-          <span class="status-icon">❌</span>
-          <span>${result.name}</span>
-        </div>
-        <div class="error-message">${result.error}</div>
-        <div class="restaurant-details">
-          <a href="${result.url}" target="_blank">Visit website</a>
-        </div>
-      `;
+      const nameRow = createNameRow('❌', result.name);
+      const errorMessage = createEl('div', 'error-message', result.error || 'Unknown error');
+      const details = createEl('div', 'restaurant-details');
+      details.appendChild(createLink(result.url, 'Visit website'));
+
+      card.appendChild(nameRow);
+      card.appendChild(errorMessage);
+      card.appendChild(details);
     } else if (result.hasFish) {
       card.classList.add('has-fish');
-      card.innerHTML = `
-        <div class="restaurant-name">
-          <span class="status-icon">🐟</span>
-          <span>${result.name}</span>
-          ${confidenceInfo.showWarning ? `<span class="confidence-badge" title="${confidenceInfo.tooltip}">${confidenceInfo.badge}</span>` : ''}
-        </div>
-        <div class="restaurant-details">
-          <strong>Fish found!</strong> ${result.fishItems.length} item(s)
-        </div>
-        ${result.fishItems.length > 0 ? `
-          <div class="fish-items">
-            ${result.fishItems.map(item => `
-              <div class="fish-item">${item}</div>
-            `).join('')}
-          </div>
-        ` : ''}
-        ${confidenceInfo.showWarning ? `
-          <div class="confidence-warning">${confidenceInfo.warning}</div>
-        ` : ''}
-        <div class="restaurant-details" style="margin-top: 10px;">
-          <a href="${result.url}" target="_blank">View full menu</a>
-        </div>
-      `;
+      const nameRow = createNameRow('🐟', result.name);
+      if (confidenceInfo.showWarning) {
+        const badge = createEl('span', 'confidence-badge', confidenceInfo.badge);
+        badge.title = confidenceInfo.tooltip;
+        nameRow.appendChild(badge);
+      }
+
+      const details = createEl('div', 'restaurant-details');
+      const strong = document.createElement('strong');
+      strong.textContent = 'Fish found!';
+      details.appendChild(strong);
+      details.appendChild(document.createTextNode(` ${result.fishItems.length} item(s)`));
+
+      card.appendChild(nameRow);
+      card.appendChild(details);
+
+      if (Array.isArray(result.fishItems) && result.fishItems.length > 0) {
+        const items = createEl('div', 'fish-items');
+        result.fishItems.forEach(item => {
+          items.appendChild(createEl('div', 'fish-item', item));
+        });
+        card.appendChild(items);
+      }
+
+      if (confidenceInfo.showWarning) {
+        card.appendChild(createEl('div', 'confidence-warning', confidenceInfo.warning));
+      }
+
+      const linkDetails = createEl('div', 'restaurant-details');
+      linkDetails.style.marginTop = '10px';
+      linkDetails.appendChild(createLink(result.url, 'View full menu'));
+      card.appendChild(linkDetails);
     } else {
       card.classList.add('no-fish');
-      card.innerHTML = `
-        <div class="restaurant-name">
-          <span class="status-icon">⚪</span>
-          <span>${result.name}</span>
-        </div>
-        <div class="restaurant-details">No fish found in today's menu</div>
-        <div class="restaurant-details">
-          <a href="${result.url}" target="_blank">Check manually</a>
-        </div>
-      `;
+      const nameRow = createNameRow('⚪', result.name);
+      const details = createEl('div', 'restaurant-details', 'No fish found in today\'s menu');
+      const linkDetails = createEl('div', 'restaurant-details');
+      linkDetails.appendChild(createLink(result.url, 'Check manually'));
+
+      card.appendChild(nameRow);
+      card.appendChild(details);
+      card.appendChild(linkDetails);
     }
 
     return card;
@@ -197,6 +208,81 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     } catch (error) {
       console.error('Error loading cached results:', error);
+    }
+  }
+
+  function createEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = text;
+    return el;
+  }
+
+  function createNameRow(icon, name) {
+    const row = createEl('div', 'restaurant-name');
+    row.appendChild(createEl('span', 'status-icon', icon));
+    row.appendChild(createEl('span', '', name || 'Unknown'));
+    return row;
+  }
+
+  function normalizeUrl(url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.href;
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  }
+
+  function createLink(url, label) {
+    const link = document.createElement('a');
+    link.textContent = label;
+    const safeUrl = normalizeUrl(url);
+    if (safeUrl) {
+      link.href = safeUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    } else {
+      link.href = '#';
+      link.addEventListener('click', event => event.preventDefault());
+    }
+    return link;
+  }
+
+  function getRestaurantOrigins() {
+    if (typeof RESTAURANTS === 'undefined') return [];
+
+    const origins = new Set();
+    for (const restaurant of RESTAURANTS) {
+      if (!restaurant || !restaurant.enabled || !restaurant.url) continue;
+      const safeUrl = normalizeUrl(restaurant.url);
+      if (!safeUrl) continue;
+      const origin = new URL(safeUrl).origin;
+      origins.add(`${origin}/*`);
+    }
+
+    return Array.from(origins);
+  }
+
+  async function ensureHostPermissions() {
+    try {
+      const origins = getRestaurantOrigins();
+      if (origins.length === 0) return true;
+
+      const missing = [];
+      for (const origin of origins) {
+        const granted = await chrome.permissions.contains({ origins: [origin] });
+        if (!granted) missing.push(origin);
+      }
+
+      if (missing.length === 0) return true;
+      return await chrome.permissions.request({ origins: missing });
+    } catch (error) {
+      console.error('Error requesting host permissions:', error);
+      return false;
     }
   }
 });

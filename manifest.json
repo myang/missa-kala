@@ -5,9 +5,14 @@
   "description": "Find which restaurants have fish on today's menu",
   "permissions": [
     "storage",
-    "offscreen"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
+    "https://ravintolafactory.com/*",
+    "https://www.compass-group.fi/*"
+  ],
+  "optional_host_permissions": [
     "<all_urls>"
   ],
   "action": {
