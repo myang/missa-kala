@@ -9,7 +9,7 @@ A Chrome extension that checks multiple restaurant websites to find which ones h
 ## Features
 
 - 🚀 Check multiple restaurant menus at once
-- 🐟 Smart fish detection using keywords
+- 🐟 Hybrid menu understanding: keyword heuristics + optional LLM backend
 - 🎨 Beautiful popup interface with color-coded results
 - 💾 Caches results for quick access
 - 🌍 Supports multiple languages (English, Finnish, easily extensible)
@@ -21,7 +21,11 @@ A Chrome extension that checks multiple restaurant websites to find which ones h
 missa-kala/
 ├── manifest.json      # Extension configuration
 ├── config.js          # Restaurant URLs and fish keywords
-├── background.js      # Service worker that fetches menus
+├── background.js      # Thin orchestrator service worker
+├── menu-fetcher.js    # Static + rendered page extraction
+├── menu-keyword-analyzer.js # Day-aware heuristic analyzer
+├── llm-client.js      # Optional LLM backend client
+├── menu-analysis-orchestrator.js # Combines heuristic + LLM results
 ├── popup.html         # Popup UI
 ├── popup.js           # Popup logic
 ├── popup.css          # Popup styles
@@ -101,6 +105,34 @@ Set `enabled: false` in `config.js`:
   enabled: false
 }
 ```
+
+
+## LLM Backend (Recommended for Better Accuracy)
+
+The extension now supports an **optional LLM backend** to better understand real menu semantics (instead of only keyword matching).
+
+Configure `LLM_BACKEND` in `config.js`:
+
+```javascript
+const LLM_BACKEND = {
+  enabled: true,
+  provider: 'custom-json',
+  endpoint: 'https://your-backend.example.com/menu/analyze',
+  apiKey: '',
+  model: '',
+  minConfidenceToUse: 0.65,
+  maxInputChars: 12000
+};
+```
+
+### Recommended deployment pattern
+- Keep LLM API keys on your backend server (not inside the extension).
+- Let the extension send extracted menu text to your backend.
+- Let backend call an LLM and return structured JSON:
+  - `hasFish` (boolean)
+  - `fishItems` (array of dish names)
+  - `confidence` (0-1)
+  - `reason` (short explanation)
 
 ## Limitations
 
