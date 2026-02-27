@@ -64,40 +64,18 @@ async function checkRestaurantMenu(restaurant) {
     // Parse HTML and search for fish keywords (with day detection)
     const staticResult = findFishInMenu(html);
 
-    // Check if page looks like a SPA
-    const isSPA = looksLikeSPA(html);
+    const shouldTryRendered = shouldUseRenderedFallback(html, staticResult);
+    let bestResult = staticResult;
 
-    // If we found fish in static HTML and page doesn't look like SPA, return result
-    if (staticResult.fishItems.length > 0 && !isSPA) {
-      return {
-        name: restaurant.name,
-        url: restaurant.url,
-        hasFish: true,
-        fishItems: staticResult.fishItems,
-        confidence: staticResult.confidence,
-        error: null
-      };
-    }
-
-    // If no fish found and page looks like SPA, try JS-rendered extraction
-    if (staticResult.fishItems.length === 0 && isSPA) {
-      console.log(`${restaurant.name} appears to be JS-rendered, using hidden tab extraction`);
+    if (shouldTryRendered) {
+      console.log(`${restaurant.name} may require JS-rendering, using hidden tab extraction`);
 
       try {
         const renderedText = await fetchRenderedPageText(restaurant.url);
         const renderedResult = findFishInText(renderedText);
-
-        return {
-          name: restaurant.name,
-          url: restaurant.url,
-          hasFish: renderedResult.fishItems.length > 0,
-          fishItems: renderedResult.fishItems,
-          confidence: renderedResult.confidence,
-          error: null
-        };
+        bestResult = pickMoreReliableResult(staticResult, renderedResult);
       } catch (renderError) {
         console.warn(`Rendered extraction failed for ${restaurant.name}:`, renderError);
-        // Fall back to static result
       }
     }
 
@@ -105,14 +83,75 @@ async function checkRestaurantMenu(restaurant) {
     return {
       name: restaurant.name,
       url: restaurant.url,
-      hasFish: staticResult.fishItems.length > 0,
-      fishItems: staticResult.fishItems,
-      confidence: staticResult.confidence,
+      hasFish: bestResult.fishItems.length > 0,
+      fishItems: bestResult.fishItems,
+      confidence: bestResult.confidence,
       error: null
     };
   } catch (error) {
     throw error;
   }
+}
+
+function shouldUseRenderedFallback(html, staticResult) {
+  const plainText = stripHtmlForHeuristics(html);
+  const plainTextLength = plainText.length;
+  const hasFishInStatic = staticResult.fishItems.length > 0;
+  const staticConfidence = staticResult.confidence?.dayDetection;
+  const lowConfidence = staticConfidence !== 'high';
+
+  if (looksLikeSPA(html)) return true;
+
+  // App-shell style pages tend to have lots of markup but little menu text.
+  if (isLikelyShellHtml(html, plainText)) return true;
+
+  // Typical JS-rendered pages contain little readable server-rendered text.
+  if (plainTextLength < 250) return true;
+
+  // If confidence is weak, verify against rendered output.
+  return lowConfidence;
+}
+
+function pickMoreReliableResult(staticResult, renderedResult) {
+  const staticHasFish = staticResult.fishItems.length > 0;
+  const renderedHasFish = renderedResult.fishItems.length > 0;
+  const staticConfidence = staticResult.confidence?.dayDetection;
+  const renderedConfidence = renderedResult.confidence?.dayDetection;
+
+  if (renderedHasFish && !staticHasFish) return renderedResult;
+
+  // Prefer rendered data when confidence improves, even if it finds fewer items.
+  if (renderedConfidence === 'high' && staticConfidence !== 'high') return renderedResult;
+
+  if (renderedHasFish && staticHasFish && renderedResult.fishItems.length >= staticResult.fishItems.length) {
+    return renderedResult;
+  }
+
+  // If rendered page confidently shows no fish while static result is low-confidence,
+  // trust rendered result to reduce false positives from stale/weekly sections.
+  if (!renderedHasFish && renderedConfidence === 'high' && staticConfidence === 'low') {
+    return renderedResult;
+  }
+
+  return staticResult;
+}
+
+function isLikelyShellHtml(html, plainText) {
+  const scriptCount = (html.match(/<script\b/gi) || []).length;
+  const divCount = (html.match(/<div\b/gi) || []).length;
+  const textDensity = plainText.length / Math.max(html.length, 1);
+
+  return (scriptCount >= 8 && textDensity < 0.08) || (divCount >= 40 && plainText.length < 600);
+}
+
+function stripHtmlForHeuristics(html) {
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Detect if page is likely a Single Page Application
@@ -211,30 +250,35 @@ async function fetchRenderedPageText(url) {
     const tab = await chrome.tabs.create({ url, active: false });
     tabId = tab.id;
 
-    await waitForTabComplete(tabId, 10000);
-    let lastText = '';
-    const attempts = 3;
+    await waitForTabComplete(tabId, 12000);
+    let bestText = '';
+    const attempts = 4;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
-      await delay(attempt === 0 ? 2000 : 1500);
+      await delay(attempt === 0 ? 1800 : 1200);
 
       const results = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
-          const body = document.body;
-          return body ? (body.innerText || body.textContent || '') : '';
-        }
+        func: extractVisibleTextFromPage
       });
 
-      lastText = results?.[0]?.result || '';
+      const text = results?.[0]?.result || '';
+      if (text.length > bestText.length) {
+        bestText = text;
+      }
 
-      // If we have a reasonable amount of text, stop early.
-      if (lastText && lastText.length >= 300) {
-        return lastText;
+      // If we have enough text and fish keywords are present, stop early.
+      if (bestText.length >= 400 && containsKeyword(bestText.toLowerCase(), FISH_KEYWORDS.map(k => k.toLowerCase()))) {
+        return bestText;
+      }
+
+      // For content-heavy pages, stop once text size stabilizes.
+      if (attempt >= 2 && Math.abs(bestText.length - text.length) < 40 && bestText.length >= 500) {
+        return bestText;
       }
     }
 
-    return lastText;
+    return bestText;
   } finally {
     if (tabId !== undefined) {
       try {
@@ -244,6 +288,45 @@ async function fetchRenderedPageText(url) {
       }
     }
   }
+}
+
+function extractVisibleTextFromPage() {
+  function collectText(node) {
+    if (!node) return '';
+    let text = '';
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      return node.textContent || '';
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return '';
+    }
+
+    const element = node;
+    const tag = element.tagName;
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
+      return '';
+    }
+
+    for (const child of element.childNodes) {
+      text += collectText(child);
+      if (child.nodeType === Node.ELEMENT_NODE && ['DIV', 'P', 'LI', 'TR', 'SECTION', 'ARTICLE', 'BR', 'H1', 'H2', 'H3', 'H4'].includes(child.tagName)) {
+        text += '\n';
+      }
+    }
+
+    if (element.shadowRoot) {
+      text += '\n' + collectText(element.shadowRoot) + '\n';
+    }
+
+    return text;
+  }
+
+  const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+  const deepText = collectText(document.body || document.documentElement);
+
+  return `${bodyText}\n${deepText}`.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function waitForTabComplete(tabId, timeoutMs) {
@@ -266,6 +349,16 @@ function waitForTabComplete(tabId, timeoutMs) {
     }
 
     chrome.tabs.onUpdated.addListener(onUpdated);
+
+    chrome.tabs.get(tabId).then(tab => {
+      if (tab?.status === 'complete') {
+        cleanup();
+        resolve();
+      }
+    }).catch(error => {
+      cleanup();
+      reject(error);
+    });
   });
 }
 
