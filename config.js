@@ -38,7 +38,21 @@ const FISH_KEYWORDS = [
   "seafood", "fillet", "grilled fish", "baked fish", "fried fish"
 ];
 
+
+// Optional LLM backend for semantic menu understanding.
+// Recommended: host your own small backend endpoint and keep API keys there.
+const LLM_BACKEND = {
+  enabled: false,
+  provider: 'custom-json', // 'custom-json' | 'openai-compatible'
+  endpoint: '',
+  apiKey: '',
+  model: '', // only used by openai-compatible provider
+  minConfidenceToUse: 0.65,
+  maxInputChars: 12000
+};
+
+
 // Export for use in other scripts
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { RESTAURANTS, FISH_KEYWORDS };
+  module.exports = { RESTAURANTS, FISH_KEYWORDS, LLM_BACKEND };
 }
