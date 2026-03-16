@@ -20,6 +20,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     return true; // async response
   }
+
+  if (request.action === 'saveApiKey') {
+    chrome.storage.local.set({ geminiApiKey: request.apiKey }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (request.action === 'getApiKey') {
+    chrome.storage.local.get(['geminiApiKey'], (result) => {
+      sendResponse({ apiKey: result.geminiApiKey || '' });
+    });
+    return true;
+  }
 });
 
 async function checkAllRestaurantMenus() {

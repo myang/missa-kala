@@ -42,7 +42,7 @@ function chooseFinalResult(heuristicResult, llmResult) {
   if (!llmResult) return heuristicResult;
 
   // Prefer LLM if it is confident, or heuristic confidence is low.
-  const llmConfident = (llmResult.llmConfidenceScore || 0) >= (LLM_BACKEND.minConfidenceToUse || 0.65);
+  const llmConfident = (llmResult.llmConfidenceScore || 0) >= 0.65;
   const heuristicLowConfidence = heuristicResult.confidence?.dayDetection !== 'high';
 
   if (llmConfident || heuristicLowConfidence) {

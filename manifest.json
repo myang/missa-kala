@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "https://ravintolafactory.com/*",
-    "https://www.compass-group.fi/*"
+    "https://www.compass-group.fi/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "optional_host_permissions": [
     "<all_urls>"

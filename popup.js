@@ -6,6 +6,12 @@ document.addEventListener('DOMContentLoaded', function() {
   const resultsContainer = document.getElementById('results');
   const lastCheckedElement = document.getElementById('lastChecked');
 
+  const toggleSettings = document.getElementById('toggleSettings');
+  const settingsPanel = document.getElementById('settings');
+  const apiKeyInput = document.getElementById('apiKey');
+  const saveApiKeyButton = document.getElementById('saveApiKey');
+  const apiKeyStatus = document.getElementById('apiKeyStatus');
+
   // Show initial empty state
   showEmptyState();
 
@@ -14,6 +20,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Load cached results if available
   loadCachedResults();
+
+  // Settings toggle
+  toggleSettings.addEventListener('click', (e) => {
+    e.preventDefault();
+    settingsPanel.classList.toggle('hidden');
+  });
+
+  // Load saved API key status
+  chrome.runtime.sendMessage({ action: 'getApiKey' }, (response) => {
+    if (response && response.apiKey) {
+      apiKeyInput.value = response.apiKey;
+      apiKeyStatus.textContent = 'Gemini AI enabled';
+      apiKeyStatus.style.color = '#28a745';
+    }
+  });
+
+  // Save API key
+  saveApiKeyButton.addEventListener('click', () => {
+    const key = apiKeyInput.value.trim();
+    chrome.runtime.sendMessage({ action: 'saveApiKey', apiKey: key }, () => {
+      if (key) {
+        apiKeyStatus.textContent = 'Gemini AI enabled';
+        apiKeyStatus.style.color = '#28a745';
+      } else {
+        apiKeyStatus.textContent = 'Using keyword fallback (no API key)';
+        apiKeyStatus.style.color = '#999';
+      }
+    });
+  });
 
   async function checkAllMenus() {
     // Disable button and show loading
@@ -94,6 +129,10 @@ document.addEventListener('DOMContentLoaded', function() {
     } else if (result.hasFish) {
       card.classList.add('has-fish');
       const nameRow = createNameRow('🐟', result.name);
+      if (result.analysisSource === 'ai') {
+        const aiBadge = createEl('span', 'analysis-badge', 'AI');
+        nameRow.appendChild(aiBadge);
+      }
       if (confidenceInfo.showWarning) {
         const badge = createEl('span', 'confidence-badge', confidenceInfo.badge);
         badge.title = confidenceInfo.tooltip;

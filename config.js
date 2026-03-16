@@ -38,21 +38,12 @@ const FISH_KEYWORDS = [
   "seafood", "fillet", "grilled fish", "baked fish", "fried fish"
 ];
 
-
-// Optional LLM backend for semantic menu understanding.
-// Recommended: host your own small backend endpoint and keep API keys there.
-const LLM_BACKEND = {
-  enabled: false,
-  provider: 'custom-json', // 'custom-json' | 'openai-compatible'
-  endpoint: '',
-  apiKey: '',
-  model: '', // only used by openai-compatible provider
-  minConfidenceToUse: 0.65,
-  maxInputChars: 12000
-};
-
+// Gemini API configuration
+// The API key is stored in chrome.storage.local and configured via the popup UI.
+// Get a free API key at https://aistudio.google.com/apikey
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 // Export for use in other scripts
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { RESTAURANTS, FISH_KEYWORDS, LLM_BACKEND };
+  module.exports = { RESTAURANTS, FISH_KEYWORDS, GEMINI_MODEL };
 }

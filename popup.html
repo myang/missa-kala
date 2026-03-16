@@ -25,6 +25,17 @@
 
     <footer>
       <p class="timestamp" id="lastChecked"></p>
+      <div class="settings-toggle">
+        <a href="#" id="toggleSettings">Settings</a>
+      </div>
+      <div id="settings" class="settings hidden">
+        <label for="apiKey">Gemini API Key (<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">get free key</a>)</label>
+        <div class="api-key-row">
+          <input type="password" id="apiKey" placeholder="AIza..." />
+          <button id="saveApiKey" class="btn-small">Save</button>
+        </div>
+        <p class="settings-hint" id="apiKeyStatus">Using keyword fallback (no API key)</p>
+      </div>
     </footer>
   </div>
 
